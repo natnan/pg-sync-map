@@ -7,8 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.impossibl.postgres.api.jdbc.PGConnection;
 import com.impossibl.postgres.api.jdbc.PGNotificationListener;
 
+import java.io.Closeable;
 import java.io.IOException;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -22,21 +22,22 @@ import java.util.UUID;
 import lombok.SneakyThrows;
 
 // TODO design concurrency mechanism
-// TODO close
+// TODO logging
 // TODO enforce (??) immutable objects so the map cannot become unsynchronized
 // TODO maybe don't implement Map<> so we can throw whatever we want?
-public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
+public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable {
 
   private static ObjectMapper mapper = new ObjectMapper();
-  private final Connection connection; // TODO handle reconnection etc.
+  private final PGConnection connection; // TODO handle reconnection etc.
   private final String tableName;
   private final Class<V> clazz;
 
+  private boolean updateThread = true;
   private final Thread thread;
 
   private Map<UUID, V> map; // TODO concurrent hashmap?
 
-  private PgMap(Map<UUID, V> map, Connection connection, Class<V> clazz, String tableName) {
+  private PgMap(Map<UUID, V> map, PGConnection connection, Class<V> clazz, String tableName) {
     this.map = map;
     this.connection = connection;
     this.clazz = clazz;
@@ -74,21 +75,24 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
     return vPgMap;
   }
 
-  @SneakyThrows({SQLException.class, IOException.class, InterruptedException.class})
+  @SneakyThrows({SQLException.class, IOException.class})
   private synchronized void updateMapThread() {
-    while (true) {
-      this.wait();
-      Map<UUID, V> newMap = new HashMap<>();
-      try (Statement statement = connection.createStatement()) {
-        ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
-        while (resultSet.next()) {
-          UUID id = UUID.fromString(resultSet.getString(1));
-          String json = resultSet.getString(2);
-          V v = mapper.readValue(json, clazz);
-          newMap.put(id, v);
+    while (updateThread) {
+      try {
+        this.wait();
+        Map<UUID, V> newMap = new HashMap<>();
+        try (Statement statement = connection.createStatement()) {
+          ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
+          while (resultSet.next()) {
+            UUID id = UUID.fromString(resultSet.getString(1));
+            String json = resultSet.getString(2);
+            V v = mapper.readValue(json, clazz);
+            newMap.put(id, v);
+          }
         }
+        this.map = newMap;
+      } catch (InterruptedException ignored) {
       }
-      this.map = newMap;
     }
   }
 
@@ -133,7 +137,6 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   @Override
   @SneakyThrows({SQLException.class})
   public void clear() {
-    // TODO (p.s. truncate doesn't trigger)
     try (Statement statement = connection.createStatement()) {
       statement.executeUpdate(String.format("TRUNCATE %s", tableName));
     }
@@ -147,6 +150,13 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   public synchronized void notification(int processId, String channelName, String payload) {
     // can't do update on this thread (probably?). Trigger update
     this.notify();  //TODO test notify while already updating
+  }
+
+  @Override
+  public void close() throws IOException {
+    updateThread = false;
+    connection.removeNotificationListener(this);
+    thread.interrupt();
   }
 
   // Generic MAP delegation
