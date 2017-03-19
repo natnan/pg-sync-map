@@ -134,10 +134,11 @@ public class PgMapTest {
   }
 
   private void insertData(UUID id, String json) throws SQLException {
-    PreparedStatement preparedStatement = connection.prepareStatement("INSERT into test_data (id, data) VALUES(?, ?);");
-    preparedStatement.setString(1, id.toString());
-    preparedStatement.setString(2, json);
-    preparedStatement.execute();
+    try (PreparedStatement preparedStatement = connection.prepareStatement("INSERT into test_data (id, data) VALUES(?, ?);")) {
+      preparedStatement.setString(1, id.toString());
+      preparedStatement.setString(2, json);
+      preparedStatement.execute();
+    }
   }
 
   @Test
@@ -161,10 +162,11 @@ public class PgMapTest {
     UUID id = UUID.randomUUID();
     testMap.put(id, new TestData("something", "else"));
 
-    PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET data=? WHERE id=?;");
-    preparedStatement.setString(2, id.toString());
-    preparedStatement.setString(1, sampleJson);
-    preparedStatement.execute();
+    try (PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET data=? WHERE id=?;")) {
+      preparedStatement.setString(2, id.toString());
+      preparedStatement.setString(1, sampleJson);
+      preparedStatement.execute();
+    }
 
     Thread.sleep(200);
     assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
@@ -176,9 +178,10 @@ public class PgMapTest {
     UUID id = UUID.randomUUID();
     testMap.put(id, new TestData("something", "else"));
 
-    PreparedStatement preparedStatement = connection.prepareStatement("DELETE FROM test_data WHERE id=?;");
-    preparedStatement.setString(1, id.toString());
-    preparedStatement.execute();
+    try (PreparedStatement preparedStatement = connection.prepareStatement("DELETE FROM test_data WHERE id=?;")) {
+      preparedStatement.setString(1, id.toString());
+      preparedStatement.execute();
+    }
 
     Thread.sleep(200);
     assertThat(testMap).isEmpty();

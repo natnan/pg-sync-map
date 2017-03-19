@@ -92,22 +92,22 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
     }
   }
 
-  // TODO close preparedStatements..
-
   @Override
   @SneakyThrows({SQLException.class, JsonProcessingException.class})
   public V put(UUID key, V value) {
     // TODO transaction
     if (map.containsKey(key)) {
-      PreparedStatement preparedStatement = connection.prepareStatement(String.format("UPDATE %s SET data=? WHERE id=?;", tableName));
-      preparedStatement.setString(2, key.toString());
-      preparedStatement.setString(1, mapper.writeValueAsString(value));
-      preparedStatement.execute();
+      try (PreparedStatement preparedStatement = connection.prepareStatement(String.format("UPDATE %s SET data=? WHERE id=?;", tableName))) {
+        preparedStatement.setString(2, key.toString());
+        preparedStatement.setString(1, mapper.writeValueAsString(value));
+        preparedStatement.execute();
+      }
     } else {
-      PreparedStatement preparedStatement = connection.prepareStatement(String.format("INSERT INTO %s (id, data) VALUES(?, ?);", tableName));
-      preparedStatement.setString(1, key.toString());
-      preparedStatement.setString(2, mapper.writeValueAsString(value));
-      preparedStatement.execute(); // TODO handle result
+      try (PreparedStatement preparedStatement = connection.prepareStatement(String.format("INSERT INTO %s (id, data) VALUES(?, ?);", tableName))) {
+        preparedStatement.setString(1, key.toString());
+        preparedStatement.setString(2, mapper.writeValueAsString(value));
+        preparedStatement.execute(); // TODO handle result
+      }
     }
     return map.put(key, value);
   }
@@ -115,9 +115,10 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   @Override
   @SneakyThrows({SQLException.class})
   public V remove(Object key) {
-    PreparedStatement preparedStatement = connection.prepareStatement(String.format("DELETE FROM %s WHERE id=?;", tableName));
-    preparedStatement.setString(1, key.toString());
-    preparedStatement.execute();
+    try (PreparedStatement preparedStatement = connection.prepareStatement(String.format("DELETE FROM %s WHERE id=?;", tableName))) {
+      preparedStatement.setString(1, key.toString());
+      preparedStatement.execute();
+    }
     return map.remove(key);
   }
 
