@@ -16,6 +16,8 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.AbstractMap;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -24,6 +26,8 @@ public class PgMapTest {
   private PGDataSource dataSource = new PGDataSource();
   private PGConnection connection;
   private static final String sampleJson = "{\"name\":\"name\",\"property\":\"property\"}";
+
+  // TODO tons of concurrency tests required
 
   public PgMapTest() {
     dataSource.setHost("localhost");
@@ -151,15 +155,11 @@ public class PgMapTest {
   @Test
   public void insert_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
     try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
+      CountDownLatch latch = new CountDownLatch(1);
+      testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
       insertSampleData(id);
-      // poll 2 seconds for changes
-      for (int i = 0; i < 200; i++) {   // TODO replace with callback wait
-        if (testMap.size() > 0) {
-          break;
-        }
-        Thread.sleep(10);
-      }
+      assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
     }
   }
@@ -167,6 +167,8 @@ public class PgMapTest {
   @Test
   public void update_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
     try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
+      CountDownLatch latch = new CountDownLatch(2);
+      testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
       testMap.put(id, new TestData("something", "else"));
 
@@ -176,7 +178,7 @@ public class PgMapTest {
         preparedStatement.execute();
       }
 
-      Thread.sleep(200);
+      assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
     }
   }
@@ -184,6 +186,8 @@ public class PgMapTest {
   @Test
   public void delete_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
     try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
+      CountDownLatch latch = new CountDownLatch(2);
+      testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
       testMap.put(id, new TestData("something", "else"));
 
@@ -192,7 +196,7 @@ public class PgMapTest {
         preparedStatement.execute();
       }
 
-      Thread.sleep(200);
+      assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
       assertThat(testMap).isEmpty();
     }
   }

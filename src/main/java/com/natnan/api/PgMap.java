@@ -19,11 +19,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import lombok.Setter;
 import lombok.SneakyThrows;
 
 // TODO design concurrency mechanism
 // TODO logging
-// TODO enforce (??) immutable objects so the map cannot become unsynchronized
+// TODO the value objects must not be mutable from outside in order to avoid unsynched states. Enforcing immutability doesn't seem to be an option. Maybe use Kryo to return deep copy of the objects
+// TODO consider not updating the map directly. Only use update via SELECT.
 // TODO maybe don't implement Map<> so we can throw whatever we want?
 public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable {
 
@@ -34,6 +36,8 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
 
   private boolean updateThread = true;
   private final Thread thread;
+  @Setter
+  private MapUpdatedNotification mapUpdatedNotification;
 
   private Map<UUID, V> map; // TODO concurrent hashmap?
 
@@ -48,7 +52,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
 
   // TODO create table if it doesn't exist
   // TODO exceptions
-  // TODO support generic type
+  // TODO support generic types
   public static <V> PgMap<V> createSyncMap(PGConnection connection, Class<V> clazz) throws SQLException, IOException {
     String tableName = CaseFormat.UPPER_CAMEL.to(CaseFormat.LOWER_UNDERSCORE, clazz.getSimpleName());
 
@@ -91,6 +95,9 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
           }
         }
         this.map = newMap;
+        if (mapUpdatedNotification != null) {
+          mapUpdatedNotification.call();
+        }
       } catch (InterruptedException ignored) {
       }
     }
@@ -99,7 +106,6 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
   @Override
   @SneakyThrows({SQLException.class, JsonProcessingException.class})
   public V put(UUID key, V value) {
-    // TODO transaction
     if (map.containsKey(key)) {
       try (PreparedStatement preparedStatement = connection.prepareStatement(String.format("UPDATE %s SET data=? WHERE id=?;", tableName))) {
         preparedStatement.setString(2, key.toString());
@@ -110,7 +116,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
       try (PreparedStatement preparedStatement = connection.prepareStatement(String.format("INSERT INTO %s (id, data) VALUES(?, ?);", tableName))) {
         preparedStatement.setString(1, key.toString());
         preparedStatement.setString(2, mapper.writeValueAsString(value));
-        preparedStatement.execute(); // TODO handle result
+        preparedStatement.execute();
       }
     }
     return map.put(key, value);
@@ -128,7 +134,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
 
   @Override
   public void putAll(Map<? extends UUID, ? extends V> m) {
-    // TODO one prepared statement for all
+    // TODO one prepared statement for all (not transactional until then)
     for (Entry<? extends UUID, ? extends V> entry : m.entrySet()) {
       put(entry.getKey(), entry.getValue());
     }
