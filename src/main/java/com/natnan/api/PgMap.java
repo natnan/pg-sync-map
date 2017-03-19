@@ -24,6 +24,7 @@ import lombok.SneakyThrows;
 // TODO design concurrency mechanism
 // TODO close
 // TODO enforce (??) immutable objects so the map cannot become unsynchronized
+// TODO maybe don't implement Map<> so we can throw whatever we want?
 public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
 
   private static ObjectMapper mapper = new ObjectMapper();
@@ -122,12 +123,23 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
 
   @Override
   public void putAll(Map<? extends UUID, ? extends V> m) {
-    // TODO
+    // TODO one prepared statement for all
+    for (Entry<? extends UUID, ? extends V> entry : m.entrySet()) {
+      put(entry.getKey(), entry.getValue());
+    }
   }
 
   @Override
+  @SneakyThrows({SQLException.class})
   public void clear() {
     // TODO (p.s. truncate doesn't trigger)
+    try (Statement statement = connection.createStatement()) {
+      statement.executeUpdate(String.format("TRUNCATE %s", tableName));
+    }
+    synchronized (this) {
+      this.notify();
+    }
+    map.clear();
   }
 
   @Override
