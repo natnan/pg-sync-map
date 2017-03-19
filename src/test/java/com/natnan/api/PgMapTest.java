@@ -71,17 +71,32 @@ public class PgMapTest {
   }
 
   @Test
-  public void update_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
+  public void insert_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
     PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
     UUID id = UUID.randomUUID();
     insertSampleData(connection, id);
     // poll 2 seconds for changes
-    for (int i = 0; i < 200; i++) {
+    for (int i = 0; i < 200; i++) {   // TODO replace with callback wait
       if (testMap.size() > 0) {
         break;
       }
       Thread.sleep(10);
     }
+    assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+  }
+
+  @Test
+  public void update_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+    UUID id = UUID.randomUUID();
+    testMap.put(id, new TestData("something", "else"));
+
+    PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET data=? WHERE id=?;");
+    preparedStatement.setString(2, id.toString());
+    preparedStatement.setString(1, sampleJson);
+    preparedStatement.execute();
+
+    Thread.sleep(200);
     assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
   }
 

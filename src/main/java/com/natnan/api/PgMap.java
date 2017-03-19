@@ -13,27 +13,34 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import lombok.SneakyThrows;
 
 // TODO design concurrency mechanism
 // TODO close
-public class PgMap<V> extends HashMap<UUID, V> implements PGNotificationListener {
+public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
 
   private static ObjectMapper mapper = new ObjectMapper();
   private final Connection connection; // TODO handle reconnection etc.
   private final String tableName;
   private final Class<V> clazz;
 
+  private final Thread thread;
+
+  private Map<UUID, V> map;
+
   private PgMap(Map<UUID, V> map, Connection connection, Class<V> clazz, String tableName) {
-    super(map);
+    this.map = map;
     this.connection = connection;
     this.clazz = clazz;
     this.tableName = tableName;
-    new Thread(this::updateMapThread).start();
+    this.thread = new Thread(this::updateMapThread);
+    thread.start(); // TODO anti-pattern to start a thread on constructor.
   }
 
   // TODO create table if it doesn't exist
@@ -46,6 +53,7 @@ public class PgMap<V> extends HashMap<UUID, V> implements PGNotificationListener
     try (Statement statement = connection.createStatement()) {
       ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
       while (resultSet.next()) {
+        // TODO abstract the parsing and writing
         UUID id = UUID.fromString(resultSet.getString(1));
         String json = resultSet.getString(2);
         V v = mapper.readValue(json, clazz);
@@ -64,6 +72,25 @@ public class PgMap<V> extends HashMap<UUID, V> implements PGNotificationListener
     return vPgMap;
   }
 
+  @SneakyThrows({SQLException.class, IOException.class, InterruptedException.class})
+  private synchronized void updateMapThread() {
+    while (true) {
+      this.wait();
+      Map<UUID, V> newMap = new HashMap<>();
+      try (Statement statement = connection.createStatement()) {
+        ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
+        while (resultSet.next()) {
+          UUID id = UUID.fromString(resultSet.getString(1));
+          String json = resultSet.getString(2);
+          V v = mapper.readValue(json, clazz);
+          newMap.put(id, v);
+        }
+      }
+      this.map = newMap;
+    }
+  }
+
+
   @Override
   @SneakyThrows({SQLException.class, JsonProcessingException.class})
   public V put(UUID key, V value) {
@@ -71,33 +98,70 @@ public class PgMap<V> extends HashMap<UUID, V> implements PGNotificationListener
     preparedStatement.setString(1, key.toString());
     preparedStatement.setString(2, mapper.writeValueAsString(value));
     preparedStatement.execute(); // TODO handle result
-    return super.put(key, value);
+    return map.put(key, value);
+  }
+
+  @Override
+  public V remove(Object key) {
+    // TODO
+    return map.remove(key);
+  }
+
+  @Override
+  public void putAll(Map<? extends UUID, ? extends V> m) {
+    // TODO
+  }
+
+  @Override
+  public void clear() {
+    // TODO (p.s. truncate doesn't trigger)
   }
 
   @Override
   public synchronized void notification(int processId, String channelName, String payload) {
     // can't do update on this thread (probably?). Trigger update
-    this.notifyAll();
+    this.notify();  //TODO test notify while updating
   }
 
-  @SneakyThrows({SQLException.class, IOException.class, InterruptedException.class})
-  private synchronized void updateMapThread() {
-    while (true) {
-      this.wait();
-      super.clear();
-      try (Statement statement = connection.createStatement()) {
-        ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
-        while (resultSet.next()) {
-          UUID id = UUID.fromString(resultSet.getString(1));
-          String json = resultSet.getString(2);
-          V v = mapper.readValue(json, clazz);
-          super.put(id, v);
-        }
-      }
-    }
+  // Generic MAP delegation
+
+  @Override
+  public int size() {
+    return map.size();
   }
 
-  // TODO proxy objects for updates
-  // TODO delete
-  // TODO putall (test first)
+  @Override
+  public boolean isEmpty() {
+    return map.isEmpty();
+  }
+
+  @Override
+  public boolean containsKey(Object key) {
+    return map.containsKey(key);
+  }
+
+  @Override
+  public boolean containsValue(Object value) {
+    return map.containsValue(value);
+  }
+
+  @Override
+  public V get(Object key) {
+    return map.get(key);
+  }
+
+  @Override
+  public Set<UUID> keySet() {
+    return map.keySet();
+  }
+
+  @Override
+  public Collection<V> values() {
+    return map.values();
+  }
+
+  @Override
+  public Set<Entry<UUID, V>> entrySet() {
+    return map.entrySet();
+  }
 }
