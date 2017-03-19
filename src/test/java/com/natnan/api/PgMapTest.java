@@ -8,7 +8,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
-import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -38,6 +37,15 @@ public class PgMapTest {
   }
 
   @Test
+  public void map_initialization_retrieves_existing_data() throws SQLException, IOException {
+    UUID id = UUID.randomUUID();
+    insertSampleData(id);
+
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+    assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+  }
+
+  @Test
   public void map_put_inserts_to_table() throws SQLException, IOException {
     PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
     UUID id = UUID.randomUUID();
@@ -55,12 +63,25 @@ public class PgMapTest {
   }
 
   @Test
-  public void map_put_updates_table_for_existing_id() throws IOException, SQLException {
-    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+  public void map_remove_updates_table() throws IOException, SQLException {
     UUID id = UUID.randomUUID();
-    TestData data = new TestData("name", "other property");
-    testMap.put(id, data);
+    insertSampleData(id);
 
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+    testMap.remove(id);
+
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
+      assertThat(resultSet.next()).isFalse();
+    }
+  }
+
+  @Test
+  public void map_put_updates_table_for_existing_id() throws IOException, SQLException {
+    UUID id = UUID.randomUUID();
+    insertData(id, "{\"name\":\"name2\",\"property\":\"property2\"}");
+
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
     testMap.put(id, new TestData("name", "property"));
 
     try (Statement statement = connection.createStatement()) {
@@ -72,19 +93,14 @@ public class PgMapTest {
     }
   }
 
-  @Test
-  public void map_initialization_retrieves_existing_data() throws SQLException, IOException {
-    UUID id = UUID.randomUUID();
-    insertSampleData(connection, id);
-
-    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
-    assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+  private void insertSampleData(UUID id) throws SQLException {
+    insertData(id, sampleJson);
   }
 
-  private void insertSampleData(Connection connection, UUID id) throws SQLException {
+  private void insertData(UUID id, String json) throws SQLException {
     PreparedStatement preparedStatement = connection.prepareStatement("INSERT into test_data (id, data) VALUES(?, ?);");
     preparedStatement.setString(1, id.toString());
-    preparedStatement.setString(2, sampleJson);
+    preparedStatement.setString(2, json);
     preparedStatement.execute();
   }
 
@@ -92,7 +108,7 @@ public class PgMapTest {
   public void insert_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
     PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
     UUID id = UUID.randomUUID();
-    insertSampleData(connection, id);
+    insertSampleData(id);
     // poll 2 seconds for changes
     for (int i = 0; i < 200; i++) {   // TODO replace with callback wait
       if (testMap.size() > 0) {
@@ -116,6 +132,20 @@ public class PgMapTest {
 
     Thread.sleep(200);
     assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+  }
+
+  @Test
+  public void delete_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+    UUID id = UUID.randomUUID();
+    testMap.put(id, new TestData("something", "else"));
+
+    PreparedStatement preparedStatement = connection.prepareStatement("DELETE FROM test_data WHERE id=?;");
+    preparedStatement.setString(1, id.toString());
+    preparedStatement.execute();
+
+    Thread.sleep(200);
+    assertThat(testMap).isEmpty();
   }
 
   @After

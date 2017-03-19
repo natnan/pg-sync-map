@@ -8,6 +8,8 @@ import java.sql.Statement;
 
 public class PgHelper {
 
+
+  // TODO move this into the map or make it a usable API
   public static void main(String[] args) throws SQLException {
     PGDataSource dataSource = new PGDataSource();
     dataSource.setHost("localhost");

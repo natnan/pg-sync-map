@@ -91,6 +91,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
     }
   }
 
+  // TODO close preparedStatements..
 
   @Override
   @SneakyThrows({SQLException.class, JsonProcessingException.class})
@@ -111,8 +112,11 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   }
 
   @Override
+  @SneakyThrows({SQLException.class})
   public V remove(Object key) {
-    // TODO
+    PreparedStatement preparedStatement = connection.prepareStatement(String.format("DELETE FROM %s WHERE id=?;", tableName));
+    preparedStatement.setString(1, key.toString());
+    preparedStatement.execute();
     return map.remove(key);
   }
 
@@ -129,7 +133,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   @Override
   public synchronized void notification(int processId, String channelName, String payload) {
     // can't do update on this thread (probably?). Trigger update
-    this.notify();  //TODO test notify while updating
+    this.notify();  //TODO test notify while already updating
   }
 
   // Generic MAP delegation
