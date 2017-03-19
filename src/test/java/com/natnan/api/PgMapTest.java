@@ -38,12 +38,30 @@ public class PgMapTest {
   }
 
   @Test
-  public void map_put_updates_table() throws SQLException, IOException {
+  public void map_put_inserts_to_table() throws SQLException, IOException {
     PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
     UUID id = UUID.randomUUID();
     TestData data = new TestData("name", "property");
     testMap.put(id, data);
     assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, data));
+
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
+      resultSet.next();
+      assertThat(resultSet.getString(1)).isEqualTo(id.toString());
+      assertThat(resultSet.getString(2)).isEqualTo(sampleJson);
+      assertThat(resultSet.next()).isFalse();
+    }
+  }
+
+  @Test
+  public void map_put_updates_table_for_existing_id() throws IOException, SQLException {
+    PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class);
+    UUID id = UUID.randomUUID();
+    TestData data = new TestData("name", "other property");
+    testMap.put(id, data);
+
+    testMap.put(id, new TestData("name", "property"));
 
     try (Statement statement = connection.createStatement()) {
       ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");

@@ -23,6 +23,7 @@ import lombok.SneakyThrows;
 
 // TODO design concurrency mechanism
 // TODO close
+// TODO enforce (??) immutable objects so the map cannot become unsynchronized
 public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
 
   private static ObjectMapper mapper = new ObjectMapper();
@@ -32,7 +33,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
 
   private final Thread thread;
 
-  private Map<UUID, V> map;
+  private Map<UUID, V> map; // TODO concurrent hashmap?
 
   private PgMap(Map<UUID, V> map, Connection connection, Class<V> clazz, String tableName) {
     this.map = map;
@@ -94,10 +95,18 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener {
   @Override
   @SneakyThrows({SQLException.class, JsonProcessingException.class})
   public V put(UUID key, V value) {
-    PreparedStatement preparedStatement = connection.prepareStatement(String.format("INSERT INTO %s (id, data) VALUES(?, ?);", tableName));
-    preparedStatement.setString(1, key.toString());
-    preparedStatement.setString(2, mapper.writeValueAsString(value));
-    preparedStatement.execute(); // TODO handle result
+    // TODO transaction
+    if (map.containsKey(key)) {
+      PreparedStatement preparedStatement = connection.prepareStatement(String.format("UPDATE %s SET data=? WHERE id=?;", tableName));
+      preparedStatement.setString(2, key.toString());
+      preparedStatement.setString(1, mapper.writeValueAsString(value));
+      preparedStatement.execute();
+    } else {
+      PreparedStatement preparedStatement = connection.prepareStatement(String.format("INSERT INTO %s (id, data) VALUES(?, ?);", tableName));
+      preparedStatement.setString(1, key.toString());
+      preparedStatement.setString(2, mapper.writeValueAsString(value));
+      preparedStatement.execute(); // TODO handle result
+    }
     return map.put(key, value);
   }
 
