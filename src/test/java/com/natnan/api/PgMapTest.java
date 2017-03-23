@@ -9,9 +9,11 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.AbstractMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -22,7 +24,19 @@ public class PgMapTest {
 
   private PGDataSource dataSource = new PGDataSource();
   private PGConnection connection;
-  private static final String sampleJson = "{\"name\":\"name\",\"property\":\"property\"}";
+  private static final TableMapper<TestData> mapper = new TableMapper<TestData>() {
+    @Override
+    public String getQueryString() {
+      return "SELECT * from test_data;";
+    }
+
+    @Override
+    public Map.Entry<UUID, TestData> mapSingleResult(ResultSet resultSet) throws SQLException {
+      UUID id = UUID.fromString(resultSet.getString("id"));
+      TestData testData = new TestData(resultSet.getString("name"), resultSet.getString("property"));
+      return new AbstractMap.SimpleEntry<>(id, testData);
+    }
+  };
 
   public PgMapTest() {
     dataSource.setHost("localhost");
@@ -35,6 +49,16 @@ public class PgMapTest {
   @Before
   public void before() throws SQLException {
     connection = (PGConnection) dataSource.getConnection();
+    // TODO recreate table
+  }
+
+  private void insertSampleData(UUID id) throws SQLException {
+    try (PreparedStatement preparedStatement = connection.prepareStatement("INSERT into test_data (id, name, property) VALUES(?, ?, ?);")) {
+      preparedStatement.setString(1, id.toString());
+      preparedStatement.setString(2, "name");
+      preparedStatement.setString(3, "property");
+      preparedStatement.execute();
+    }
   }
 
   @Test
@@ -42,26 +66,14 @@ public class PgMapTest {
     UUID id = UUID.randomUUID();
     insertSampleData(id);
 
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
+    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, mapper)) {
       assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
-    }
-  }
-
-  private void insertSampleData(UUID id) throws SQLException {
-    insertData(id, sampleJson);
-  }
-
-  private void insertData(UUID id, String json) throws SQLException {
-    try (PreparedStatement preparedStatement = connection.prepareStatement("INSERT into test_data (id, data) VALUES(?, ?);")) {
-      preparedStatement.setString(1, id.toString());
-      preparedStatement.setString(2, json);
-      preparedStatement.execute();
     }
   }
 
   @Test
   public void insert_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
+    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, mapper)) {
       CountDownLatch latch = new CountDownLatch(1);
       testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
@@ -73,30 +85,31 @@ public class PgMapTest {
 
   @Test
   public void update_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      CountDownLatch latch = new CountDownLatch(2);
-      testMap.setMapUpdatedNotification(latch::countDown);
-      UUID id = UUID.randomUUID();
-      insertSampleData(id);
+    UUID id = UUID.randomUUID();
+    insertSampleData(id);
 
-      try (PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET data=? WHERE id=?;")) {
+    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, mapper)) {
+      CountDownLatch latch = new CountDownLatch(1);
+      testMap.setMapUpdatedNotification(latch::countDown);
+
+      try (PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET name=? WHERE id=?;")) {
         preparedStatement.setString(2, id.toString());
-        preparedStatement.setString(1, sampleJson);
+        preparedStatement.setString(1, "another");
         preparedStatement.execute();
       }
 
       assertThat(latch.await(2, TimeUnit.SECONDS)).isTrue();
-      assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+      assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("another", "property")));
     }
   }
 
   @Test
   public void delete_via_another_channel_updates_map_asynchronously() throws SQLException, IOException, InterruptedException {
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      CountDownLatch latch = new CountDownLatch(2);
+    UUID id = UUID.randomUUID();
+    insertSampleData(id);
+    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, mapper)) {
+      CountDownLatch latch = new CountDownLatch(1);
       testMap.setMapUpdatedNotification(latch::countDown);
-      UUID id = UUID.randomUUID();
-      insertSampleData(id);
 
       try (PreparedStatement preparedStatement = connection.prepareStatement("DELETE FROM test_data WHERE id=?;")) {
         preparedStatement.setString(1, id.toString());

@@ -1,8 +1,7 @@
 package com.natnan.api;
 
-import com.google.common.base.CaseFormat;
+import com.google.common.collect.ImmutableMap;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.impossibl.postgres.api.jdbc.PGConnection;
 import com.impossibl.postgres.api.jdbc.PGNotificationListener;
 
@@ -12,7 +11,6 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.Collection;
-import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -20,75 +18,51 @@ import java.util.UUID;
 import lombok.Setter;
 import lombok.SneakyThrows;
 
-// TODO rename
+// TODO rename?
 // TODO logging & exceptions
 // TODO the value objects must not be mutable from outside in order to avoid unsynched states. Enforcing immutability doesn't seem to be an option. Maybe use Kryo to return deep copy of the objects
-public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable {
+public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable {
 
-  private static ObjectMapper mapper = new ObjectMapper();
   private final PGConnection connection; // TODO handle reconnection etc.
-  private final String tableName;
-  private final Class<V> clazz;
+  private final TableMapper<T> tableMapper;
 
   private boolean updateThread = true;
+  private AutoResetEvent event = new AutoResetEvent(false);
   private final Thread thread;
   @Setter
   private MapUpdatedNotification mapUpdatedNotification;
 
-  private Map<UUID, V> map; // TODO concurrent hashmap?
+  private ImmutableMap<UUID, T> map = ImmutableMap.of();
 
-  private PgMap(Map<UUID, V> map, PGConnection connection, Class<V> clazz, String tableName) {
-    this.map = map;
+  private PgMap(PGConnection connection, TableMapper<T> tableMapper) {
     this.connection = connection;
-    this.clazz = clazz;
-    this.tableName = tableName;
+    this.tableMapper = tableMapper;
     this.thread = new Thread(this::updateMapThread);
-    thread.start(); // TODO anti-pattern to start a thread on constructor.
   }
 
-  // TODO support generic types
-  public static <V> PgMap<V> createSyncMap(PGConnection connection, Class<V> clazz) throws SQLException, IOException {
-    String tableName = CaseFormat.UPPER_CAMEL.to(CaseFormat.LOWER_UNDERSCORE, clazz.getSimpleName());
-
-    Map<UUID, V> map = new HashMap<>();
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
-      while (resultSet.next()) {
-        // TODO abstract the parsing
-        UUID id = UUID.fromString(resultSet.getString(1));
-        String json = resultSet.getString(2);
-        V v = mapper.readValue(json, clazz);
-        map.put(id, v);
-      }
-    }
-
+  private void start() throws SQLException {
     // TODO test same two objects at the same time
+    updateMap();
     try (Statement statement = connection.createStatement()) {
-      statement.execute(String.format("LISTEN %s", tableName));
+      statement.execute(String.format("LISTEN %s", "test_data")); // TODO hardcoded :(
     }
-
-    PgMap<V> vPgMap = new PgMap<>(map, connection, clazz, tableName);
-    connection.addNotificationListener(vPgMap);
-
-    return vPgMap;
+    connection.addNotificationListener(this);
+    thread.start();
   }
 
-  @SneakyThrows({SQLException.class, IOException.class})
-  private synchronized void updateMapThread() {
+  public static <T> PgMap<T> createSyncMap(PGConnection connection, TableMapper<T> tableMapper) throws SQLException {
+    PgMap<T> map = new PgMap<>(connection, tableMapper);
+    map.start();
+    return map;
+  }
+
+  @SneakyThrows({SQLException.class})
+  private void updateMapThread() {
     while (updateThread) {
       try {
-        this.wait();
-        Map<UUID, V> newMap = new HashMap<>();
-        try (Statement statement = connection.createStatement()) {
-          ResultSet resultSet = statement.executeQuery(String.format("SELECT id, data FROM %s;", tableName));
-          while (resultSet.next()) {
-            UUID id = UUID.fromString(resultSet.getString(1));
-            String json = resultSet.getString(2);
-            V v = mapper.readValue(json, clazz);
-            newMap.put(id, v);
-          }
-        }
-        this.map = newMap;
+        event.waitOne();
+        updateMap();
+        event.reset();
         if (mapUpdatedNotification != null) {
           mapUpdatedNotification.call();
         }
@@ -97,10 +71,22 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
     }
   }
 
+  private void updateMap() throws SQLException {
+    ImmutableMap.Builder<UUID, T> builder = ImmutableMap.builder();
+    try (Statement statement = connection.createStatement()) {
+      ResultSet resultSet = statement.executeQuery(tableMapper.getQueryString());
+      while (resultSet.next()) {
+        Entry<UUID, T> entry = tableMapper.mapSingleResult(resultSet);
+        builder.put(entry.getKey(), entry.getValue());
+      }
+    }
+    this.map = builder.build();
+  }
+
   @Override
-  public synchronized void notification(int processId, String channelName, String payload) {
+  public void notification(int processId, String channelName, String payload) {
     // can't do update on this thread (probably?). Trigger update
-    this.notify();  //TODO test notify while already updating
+    event.set();
   }
 
   @Override
@@ -113,17 +99,17 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
   // Generic MAP delegation
 
   @Override
-  public V put(UUID key, V value) {
+  public T put(UUID key, T value) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public V remove(Object key) {
+  public T remove(Object key) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public void putAll(Map<? extends UUID, ? extends V> m) {
+  public void putAll(Map<? extends UUID, ? extends T> m) {
     throw new UnsupportedOperationException();
   }
 
@@ -153,7 +139,7 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
   }
 
   @Override
-  public V get(Object key) {
+  public T get(Object key) {
     return map.get(key);
   }
 
@@ -163,12 +149,12 @@ public class PgMap<V> implements Map<UUID, V>, PGNotificationListener, Closeable
   }
 
   @Override
-  public Collection<V> values() {
+  public Collection<T> values() {
     return map.values();
   }
 
   @Override
-  public Set<Entry<UUID, V>> entrySet() {
+  public Set<Entry<UUID, T>> entrySet() {
     return map.entrySet();
   }
 }
