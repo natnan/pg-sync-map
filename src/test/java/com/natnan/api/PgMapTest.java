@@ -49,7 +49,17 @@ public class PgMapTest {
   @Before
   public void before() throws SQLException {
     connection = (PGConnection) dataSource.getConnection();
-    // TODO recreate table
+    try (Statement statement = connection.createStatement()) {
+      statement.executeUpdate("CREATE TABLE test_data (\n"
+                              + "    id uuid NOT NULL,\n"
+                              + "    name text COLLATE pg_catalog.\"default\",\n"
+                              + "    property text COLLATE pg_catalog.\"default\",\n"
+                              + "    CONSTRAINT \"map-test_pkey\" PRIMARY KEY (id)\n"
+                              + ");"
+                              + "CREATE TRIGGER table_change \n"
+                              + "    AFTER INSERT OR UPDATE OR DELETE ON test_data\n"
+                              + "    FOR EACH ROW EXECUTE PROCEDURE notify_change();");
+    }
   }
 
   private void insertSampleData(UUID id) throws SQLException {
@@ -124,7 +134,7 @@ public class PgMapTest {
   @After
   public void after() throws SQLException {
     try (Statement statement = connection.createStatement()) {
-      statement.executeUpdate("truncate test_data");
+      statement.executeUpdate("drop table test_data;");
     }
     connection.close();
   }
