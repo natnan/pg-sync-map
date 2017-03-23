@@ -1,7 +1,5 @@
 package com.natnan.api;
 
-import com.google.common.collect.ImmutableMap;
-
 import com.impossibl.postgres.api.jdbc.PGConnection;
 import com.impossibl.postgres.jdbc.PGDataSource;
 
@@ -11,7 +9,6 @@ import org.junit.Test;
 
 import java.io.IOException;
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.AbstractMap;
@@ -26,8 +23,6 @@ public class PgMapTest {
   private PGDataSource dataSource = new PGDataSource();
   private PGConnection connection;
   private static final String sampleJson = "{\"name\":\"name\",\"property\":\"property\"}";
-
-  // TODO tons of concurrency tests required
 
   public PgMapTest() {
     dataSource.setHost("localhost");
@@ -49,94 +44,6 @@ public class PgMapTest {
 
     try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
       assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
-    }
-  }
-
-  @Test
-  public void map_put_inserts_to_table() throws SQLException, IOException {
-    UUID id;
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      id = UUID.randomUUID();
-      TestData data = new TestData("name", "property");
-      testMap.put(id, data);
-      assertThat(testMap).containsOnly(new AbstractMap.SimpleEntry<>(id, data));
-    }
-
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
-      resultSet.next();
-      assertThat(resultSet.getString(1)).isEqualTo(id.toString());
-      assertThat(resultSet.getString(2)).isEqualTo(sampleJson);
-      assertThat(resultSet.next()).isFalse();
-    }
-  }
-
-  @Test
-  public void map_put_all_inserts_all_to_table() throws IOException, SQLException {
-    UUID id = UUID.randomUUID();
-    UUID id2 = UUID.randomUUID();
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      testMap.putAll(ImmutableMap.of(id, new TestData("name", "property"), id2, new TestData("name2", "property2")));
-      assertThat(testMap).hasSize(2);
-    }
-
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery("SELECT id FROM test_data;");
-      resultSet.next();
-      assertThat(resultSet.getString(1)).isEqualTo(id.toString());
-      resultSet.next();
-      assertThat(resultSet.getString(1)).isEqualTo(id2.toString());
-      assertThat(resultSet.next()).isFalse();
-    }
-  }
-
-  @Test
-  public void map_remove_updates_table() throws IOException, SQLException {
-    UUID id = UUID.randomUUID();
-    insertSampleData(id);
-
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      testMap.remove(id);
-    }
-
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
-      assertThat(resultSet.next()).isFalse();
-    }
-  }
-
-  @Test
-  public void map_clear_truncates_table() throws IOException, SQLException {
-    insertSampleData(UUID.randomUUID());
-    insertSampleData(UUID.randomUUID());
-
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      assertThat(testMap).hasSize(2);
-      testMap.clear();
-      assertThat(testMap).isEmpty();
-    }
-
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
-      assertThat(resultSet.next()).isFalse();
-    }
-  }
-
-  @Test
-  public void map_put_updates_table_for_existing_id() throws IOException, SQLException {
-    UUID id = UUID.randomUUID();
-    insertData(id, "{\"name\":\"name2\",\"property\":\"property2\"}");
-
-    try (PgMap<TestData> testMap = PgMap.createSyncMap(connection, TestData.class)) {
-      testMap.put(id, new TestData("name", "property"));
-    }
-
-    try (Statement statement = connection.createStatement()) {
-      ResultSet resultSet = statement.executeQuery("SELECT id, data FROM test_data;");
-      resultSet.next();
-      assertThat(resultSet.getString(1)).isEqualTo(id.toString());
-      assertThat(resultSet.getString(2)).isEqualTo(sampleJson);
-      assertThat(resultSet.next()).isFalse();
     }
   }
 
@@ -170,7 +77,7 @@ public class PgMapTest {
       CountDownLatch latch = new CountDownLatch(2);
       testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
-      testMap.put(id, new TestData("something", "else"));
+      insertSampleData(id);
 
       try (PreparedStatement preparedStatement = connection.prepareStatement("UPDATE test_data SET data=? WHERE id=?;")) {
         preparedStatement.setString(2, id.toString());
@@ -189,7 +96,7 @@ public class PgMapTest {
       CountDownLatch latch = new CountDownLatch(2);
       testMap.setMapUpdatedNotification(latch::countDown);
       UUID id = UUID.randomUUID();
-      testMap.put(id, new TestData("something", "else"));
+      insertSampleData(id);
 
       try (PreparedStatement preparedStatement = connection.prepareStatement("DELETE FROM test_data WHERE id=?;")) {
         preparedStatement.setString(1, id.toString());
