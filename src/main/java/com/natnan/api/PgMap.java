@@ -61,8 +61,8 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
     while (updateThread) {
       try {
         event.waitOne();
-        updateMap();
         event.reset();
+        updateMap();
         if (mapUpdatedNotification != null) {
           mapUpdatedNotification.call();
         }
