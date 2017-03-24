@@ -26,6 +26,11 @@ public class PgMapTest {
   private PGConnection connection;
   private static final TableMapper<TestData> mapper = new TableMapper<TestData>() {
     @Override
+    public String getTableName() {
+      return "test_data";
+    }
+
+    @Override
     public String getQueryString() {
       return "SELECT * from test_data;";
     }
@@ -55,10 +60,7 @@ public class PgMapTest {
                               + "    name text COLLATE pg_catalog.\"default\",\n"
                               + "    property text COLLATE pg_catalog.\"default\",\n"
                               + "    CONSTRAINT \"map-test_pkey\" PRIMARY KEY (id)\n"
-                              + ");"
-                              + "CREATE TRIGGER table_change \n"
-                              + "    AFTER INSERT OR UPDATE OR DELETE ON test_data\n"
-                              + "    FOR EACH ROW EXECUTE PROCEDURE notify_change();");
+                              + ");");
     }
   }
 

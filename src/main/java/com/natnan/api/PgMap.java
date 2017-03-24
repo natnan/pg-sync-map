@@ -26,7 +26,7 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
   private final PGConnection connection; // TODO handle reconnection etc.
   private final TableMapper<T> tableMapper;
 
-  private boolean updateThread = true;
+  private boolean updateThread;
   private AutoResetEvent event = new AutoResetEvent(false);
   private final Thread thread;
   @Setter
@@ -42,9 +42,20 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
 
   private void start() throws SQLException {
     // TODO test same two objects at the same time
+    updateThread = true;
     updateMap();
     try (Statement statement = connection.createStatement()) {
-      statement.execute(String.format("LISTEN %s", "test_data")); // TODO hardcoded :(
+      statement.execute(String.format("CREATE OR REPLACE FUNCTION pg_sync_map_notify_change() RETURNS TRIGGER AS $$\n"
+                                      + "    BEGIN\n"
+                                      + "        PERFORM pg_notify(TG_TABLE_NAME, TG_TABLE_NAME);\n"
+                                      + "        RETURN NEW;\n"
+                                      + "    END;\n"
+                                      + "$$ LANGUAGE plpgsql;\n"
+                                      + "DROP TRIGGER IF EXISTS %s ON test_data;\n"
+                                      + "CREATE TRIGGER pg_sync_map_table_change \n"
+                                      + "    AFTER INSERT OR UPDATE OR DELETE ON %s\n"
+                                      + "    FOR EACH ROW EXECUTE PROCEDURE pg_sync_map_notify_change();\n"
+                                      + "LISTEN %s", tableMapper.getTableName(), tableMapper.getTableName(), tableMapper.getTableName()));
     }
     connection.addNotificationListener(this);
     thread.start();
@@ -91,9 +102,16 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
 
   @Override
   public void close() throws IOException {
-    updateThread = false;
-    connection.removeNotificationListener(this);
-    thread.interrupt();
+    if (updateThread) { // started
+      updateThread = false;
+      connection.removeNotificationListener(this);
+      thread.interrupt();
+      try (Statement statement = connection.createStatement()) {
+        statement.executeUpdate(String.format("DROP TRIGGER IF EXISTS %s ON test_data;", tableMapper.getTableName()));
+      } catch (SQLException e) {
+        // TODO log
+      }
+    }
   }
 
   // Generic MAP delegation

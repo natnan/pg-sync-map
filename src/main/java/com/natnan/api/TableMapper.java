@@ -7,6 +7,8 @@ import java.util.UUID;
 
 public interface TableMapper<T> {
 
+  String getTableName();
+
   String getQueryString();
 
   Map.Entry<UUID, T> mapSingleResult(ResultSet resultSet) throws SQLException;
