@@ -133,6 +133,24 @@ public class PgMapTest {
     }
   }
 
+  @Test
+  public void two_maps_for_the_same_table_are_updated_and_notified_once() throws SQLException, IOException, InterruptedException {
+    try (PgMap<TestData> map1 = PgMap.createSyncMap(connection, mapper)) {
+      CountDownLatch latch1 = new CountDownLatch(1);
+      map1.setMapUpdatedNotification(latch1::countDown);
+      try (PgMap<TestData> map2 = PgMap.createSyncMap(connection, mapper)) {
+        CountDownLatch latch2 = new CountDownLatch(1);
+        map2.setMapUpdatedNotification(latch2::countDown);
+        UUID id = UUID.randomUUID();
+        insertSampleData(id);
+        assertThat(latch1.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(map1).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+        assertThat(latch2.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(map2).containsOnly(new AbstractMap.SimpleEntry<>(id, new TestData("name", "property")));
+      }
+    }
+  }
+
   @After
   public void after() throws SQLException {
     try (Statement statement = connection.createStatement()) {

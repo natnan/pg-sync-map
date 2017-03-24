@@ -41,7 +41,6 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
   }
 
   private void start() throws SQLException {
-    // TODO test same two objects at the same time
     updateThread = true;
     updateMap();
     try (Statement statement = connection.createStatement()) {
@@ -51,7 +50,7 @@ public class PgMap<T> implements Map<UUID, T>, PGNotificationListener, Closeable
                                       + "        RETURN NEW;\n"
                                       + "    END;\n"
                                       + "$$ LANGUAGE plpgsql;\n"
-                                      + "DROP TRIGGER IF EXISTS %s ON test_data;\n"
+                                      + "DROP TRIGGER IF EXISTS pg_sync_map_table_change ON %s;\n"
                                       + "CREATE TRIGGER pg_sync_map_table_change \n"
                                       + "    AFTER INSERT OR UPDATE OR DELETE ON %s\n"
                                       + "    FOR EACH ROW EXECUTE PROCEDURE pg_sync_map_notify_change();\n"
